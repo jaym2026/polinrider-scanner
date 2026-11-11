@@ -1,0 +1,33 @@
+# Sample GitHub Actions workflow for polinrider_scan.py.
+#
+# Copy this file to .github/workflows/polinrider-scan.yml and the scanner to
+# .github/polinrider/polinrider_scan.py. Make every job that installs, builds or tests the
+# project depend on this one ("needs: polinrider-scan"), so an infected checkout fails here
+# before any of its code runs.
+#
+# The hash below is of polinrider_scan.py version 0.1.1. Update it whenever you update the
+# scanner. Anyone who can push here can also edit a scanner kept in this repository, so the
+# check only helps if changes to this workflow are reviewed (for example with CODEOWNERS).
+
+name: polinrider-scan
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  polinrider-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check the scanner has not been changed
+        run: echo "1814f4ee4255ee7accb4f650bd69130cfbd26c2a112cfcd86eada161116c984b  .github/polinrider/polinrider_scan.py" | sha256sum -c -
+
+      - name: Scan for the PolinRider fake-font implant
+        run: python3 -I .github/polinrider/polinrider_scan.py .
