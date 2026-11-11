@@ -129,3 +129,7 @@ The tests build small synthetic fixtures in a temporary folder. Each fixture has
 ```bash
 python3 -I -m unittest discover -s tests -v
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE). Free to use, change and share, including inside your own pipelines and tools. It comes with no warranty: a clean result is not a guarantee, as described under [What this catches and what it cannot](#what-this-catches-and-what-it-cannot).
