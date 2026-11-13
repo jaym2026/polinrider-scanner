@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """polinrider_scan.py - a static scanner for the PolinRider / Contagious Interview fake-font
-implant and the #ghc2 stealer.
+implant, the #ghc2 stealer, and the GhostAction GitHub Actions workflow (including its
+self-hosted runner backdoor).
 
 It reads files as bytes and matches patterns. It never runs, imports, evaluates or fetches
 anything it finds, and it never starts node or npm: a trojaned npm restarts the backdoor on
@@ -27,7 +28,7 @@ import stat
 import subprocess
 import sys
 
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 HIGH, REVIEW = "high", "review"
 SELF = os.path.realpath(os.path.abspath(__file__))
 try:
@@ -84,6 +85,17 @@ MARKERS = [
     ("193.32.204.199 stealer collector", re.compile(rb"193\.32\.204\.199")),
 ]
 OBFUSCATED = re.compile(rb"_0x[0-9a-f]{4,6}")
+
+# GhostAction: a GitHub Actions workflow, pushed with a stolen login, that sends secrets to this
+# address when GitHub runs it. Its runner-backdoor version reads the self-hosted runner's own
+# disk and installs a crontab line instead. A workflow file is judged as a workflow (rule names
+# below), so its advice is about GitHub secrets, not about cleaning a computer.
+GHOSTACTION_ADDR = re.compile(rb"193\.32\.204\.199")
+WORKFLOW_PATH = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
+RUNNER_BACKDOOR = re.compile(rb"\bcrontab\b|~/\.ssh/id_|\.aws/credentials|\.git-credentials|169\.254\.169\.254"
+                             rb"|\.kube/config|\.docker/config\.json", re.I)
+SELF_HOSTED = re.compile(rb"runs-on:[^\n]*self-hosted", re.I)
+GHOSTACTION_RULES = ("ghostaction-workflow", "ghostaction-runner-backdoor")
 
 # Rule 3: a long line with a long whitespace run followed by code.
 LONG_LINE = 2000
@@ -342,7 +354,7 @@ class RepoScan:
         self.cap = cap
         self.findings = []
         self.checked = {"files": 0, "font_like_files": 0, "task_files": 0, "package_json": 0,
-                        "gitignore": 0, "config_files": 0, "code_files": 0, "unreadable": 0,
+                        "gitignore": 0, "config_files": 0, "code_files": 0, "workflow_files": 0, "unreadable": 0,
                         "truncated": 0}
 
     # -- plumbing ---------------------------------------------------------------------------
@@ -436,7 +448,9 @@ class RepoScan:
         rel = self.rel(p)
         ext = ext_of(name)
         parent = os.path.basename(os.path.dirname(p))
-        if name == "tasks.json" and parent == ".vscode":
+        if WORKFLOW_PATH.search(os.path.abspath(p).replace(os.sep, "/")):
+            self.check_workflow(p)
+        elif name == "tasks.json" and parent == ".vscode":
             self.check_tasks(p, os.path.dirname(os.path.dirname(p)))
         elif name.endswith(".code-workspace"):
             self.check_tasks(p, os.path.dirname(p))
@@ -525,6 +539,28 @@ class RepoScan:
             if m:
                 bits.append("markers: " + ", ".join(m))
             self.add("hidden-code", HIGH, p, "; ".join(bits))
+
+    # -- GhostAction workflows --------------------------------------------------------------
+    def check_workflow(self, p):
+        self.checked["workflow_files"] += 1
+        data = self.read(p)
+        if not data:
+            return
+        if GHOSTACTION_ADDR.search(data):
+            if RUNNER_BACKDOOR.search(data):
+                where = "a self-hosted runner" if SELF_HOSTED.search(data) else "the machine that runs it"
+                self.add("ghostaction-runner-backdoor", HIGH, p,
+                         "GhostAction runner backdoor: when it runs on %s it copies SSH keys and cloud, AI and GitHub "
+                         "credentials off that machine to 193.32.204.199, and may install a crontab line tagged "
+                         "#ghc2 that runs new code from there every five minutes" % where)
+            else:
+                self.add("ghostaction-workflow", HIGH, p,
+                         "GhostAction workflow: when GitHub runs it, it sends repository secrets, keys found in the "
+                         "code or its history, or cloud credentials to 193.32.204.199")
+            return
+        m = markers_in(data)
+        if m:
+            self.add("marker", HIGH, p, "campaign markers: " + ", ".join(m))
 
     def check_code(self, p, ext):
         self.checked["code_files"] += 1
@@ -1102,6 +1138,34 @@ NEXT_STEPS = (
     "the stealer takes them and can push the code back after you remove it. Then change every "
     "other secret the computer could reach, then clean or reinstall it. See the README.")
 
+GHOSTACTION_STEPS = (
+    "What to do about the GhostAction workflow: it runs on GitHub, not on your computer, and "
+    "whoever pushed it had a working GitHub login. From a computer you trust, change your GitHub "
+    "password, revoke personal access tokens, OAuth and GitHub App grants, and SSH and deploy keys, "
+    "and sign out of other sessions first. Then replace every secret stored in the repository and "
+    "its organization, and every key that has ever been in the code, its history or its wiki, then "
+    "delete the workflow. See the README.")
+
+RUNNER_STEPS = (
+    "Runner backdoor: if the repository has a self-hosted runner, that machine is compromised and "
+    "deleting the workflow does not clean it. On it, run crontab -l, remove the line ending in "
+    "#ghc2 and take the machine off the network before you change any credentials; then rebuild it "
+    "or replace everything stored on it. If the repository has no self-hosted runner, that job never ran.")
+
+
+def next_steps(findings):
+    """The advice for what was found: GhostAction findings get their own steps, because the fix
+    is GitHub secrets, not the computer; anything else gets the PolinRider steps."""
+    high = [f for f in findings if f["severity"] == HIGH]
+    out = []
+    if any(f["rule"] not in GHOSTACTION_RULES for f in high):
+        out.append(NEXT_STEPS)
+    if any(f["rule"] in GHOSTACTION_RULES for f in high):
+        out.append(GHOSTACTION_STEPS)
+    if any(f["rule"] == "ghostaction-runner-backdoor" for f in high):
+        out.append(RUNNER_STEPS)
+    return out
+
 
 def machine_summary(checked):
     """What a machine scan looked at, in words: which npm copies and which apps it read, and
@@ -1136,9 +1200,9 @@ def render_text(mode, roots, findings, checked):
     out = ["polinrider-scan %s, %s scan of %s" % (VERSION, mode, ", ".join(roots))]
     if mode == "repository":
         c = checked
-        out.append("Checked %d files: %d font-like, %d task files, %d package.json, %d .gitignore, %d config, %d other code%s" % (
+        out.append("Checked %d files: %d font-like, %d task files, %d package.json, %d .gitignore, %d config, %d workflows, %d other code%s" % (
             c["files"], c["font_like_files"], c["task_files"], c["package_json"], c["gitignore"], c["config_files"],
-            c["code_files"], (", %d unreadable" % c["unreadable"]) if c["unreadable"] else ""))
+            c.get("workflow_files", 0), c["code_files"], (", %d unreadable" % c["unreadable"]) if c["unreadable"] else ""))
         if c["truncated"]:
             out.append("%d files were larger than --max-file-mb; only their first and last halves of that size were read" % c["truncated"])
     else:
@@ -1154,14 +1218,14 @@ def render_text(mode, roots, findings, checked):
         out.append("")
         out.append("%d finding%s (%d high, %d to review)." % (len(findings), "" if len(findings) == 1 else "s", nh, nr))
         if nh:
-            out.append(NEXT_STEPS)
+            out.extend(next_steps(findings))
     else:
         out.append("Nothing found. This covers the patterns listed in the README, in the files on disk now; it says nothing about other branches, history or stolen credentials.")
     return "\n".join(out)
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Static scanner for the PolinRider / Contagious Interview fake-font implant and the #ghc2 stealer. Reads files only; never runs anything it finds.")
+    ap = argparse.ArgumentParser(description="Static scanner for the PolinRider / Contagious Interview fake-font implant, the #ghc2 stealer and the GhostAction GitHub Actions workflow. Reads files only; never runs anything it finds.")
     ap.add_argument("paths", nargs="*", help="repositories or files to scan (default: the current folder)")
     ap.add_argument("--machine", action="store_true", help="check this computer for the backdoor's persistence instead")
     ap.add_argument("--json", action="store_true", help="print JSON instead of text")

@@ -1,6 +1,6 @@
 # polinrider-scan
 
-A small, free scanner that checks your repositories, and optionally your computer, for the **PolinRider** fake-font implant (part of the Contagious Interview operation) and the **`#ghc2`** stealer.
+A small, free scanner that checks your repositories, and optionally your computer, for the **PolinRider** fake-font implant (part of the Contagious Interview operation), the **`#ghc2`** stealer, and the **GhostAction** GitHub Actions workflow, including its self-hosted runner backdoor.
 
 It is one Python 3 file that uses only the standard library and runs on Windows, macOS and Linux. It **only reads files**: it never runs, imports, evaluates or downloads anything it finds. It never starts `node` or `npm` either, because the backdoor patches npm itself, so on an infected computer every npm command restarts it.
 
@@ -69,6 +69,8 @@ Each finding is either **high** (matches the campaign's shape) or **review** (wo
 | `marker` | The campaign's fixed strings in code, script, JSON and YAML files: `global.i=`, `global['!']`, `global['_V']`, the injector comments `/*C2.....A*/`, `/*M260630A*/`, `/*RS260605*/`, `/*NPM_WS_SHIM*/`, the app-injection names `__inzRQ` / `__inzCR`, a `require` of a `.inz.cjs` file, `.npm-ws-runner.js`, two obfuscator variants, and the `#ghc2` stealer's tag, beacon and collector address. Documentation (`.md`, `.txt`) is not searched, because threat reports quote these strings. | High |
 | `npm-script-launcher` | `package.json` scripts (root and subfolders) that run `node <file>`, above all as `node <file> &&` (or `;`, `&`) before the real command, at any position in the chain. | High when the file holds hidden code or markers, or is a font-like file holding text. Review when a chained file is a plain `init` or `api.js`, or a font-like file is missing. |
 | `gitignore-entries` | `.gitignore` entries the operator's push scripts leave behind: `config.bat`, `temp_auto_push.bat`, `temp_interactive_push.bat`, `branch_structure.json`. | High for either push script or two or more entries; review for one. |
+| `ghostaction-workflow` | A workflow under `.github/workflows/` that sends data to 193.32.204.199: the GhostAction stealer, pushed with a stolen GitHub login. Depending on the version it sends repository secrets, keys found in the code or its git history, or cloud credentials obtained through GitHub's OpenID Connect sign-in. It runs on GitHub, not on your computer. | High |
+| `ghostaction-runner-backdoor` | The GhostAction version aimed at a self-hosted runner: it copies SSH keys and cloud, AI and GitHub credentials off the runner's disk and installs a crontab line tagged `#ghc2`. | High |
 | `unreadable` | A folder the scan could not open, so nothing in it was checked. | Review |
 
 Folders named `.git`, `node_modules`, `.hg` and `.svn` are skipped. Only regular files are read: symbolic links, named pipes and devices are not. A path that a task or script names outside the scanned folder (`../`, an absolute path, another drive) is not followed. The scanner skips its own source file and byte-identical copies of it.
@@ -103,6 +105,8 @@ It cannot:
 - Guarantee anything about a "review" finding. Those need a person to read the file.
 - Read more than `--max-file-mb` of a very large file: code hidden in the middle of a file bigger than that is missed.
 
+- **See a GhostAction workflow that has already been deleted.** It only reads the files checked out now. If one ran before you removed it, its secrets are already gone; look at the repository's Actions tab to see when it ran.
+
 Repositories that study this campaign (detection rules, tests, research notes in code) will match the marker rule. Use `--exclude` for those folders.
 
 ## If it finds something
@@ -115,6 +119,16 @@ Follow these steps in order, because new credentials entered on an infected comp
 4. Still from the clean device, change everything else that computer could reach: every key and token in your environment variables or `.env` files; passwords saved in your browsers, then sign out of all sessions, because it copies cookies too; the master password of your password manager; npm, cloud and AI tool logins; and move any crypto to a new wallet with a new recovery phrase.
 5. Then clean the computer, or better, reinstall the operating system. To clean it: delete the hidden `.node_modules` folder in your home folder (not a project's `node_modules`); reinstall Node.js, including every nvm version, because the malware adds code to npm's own `lib/cli.js`; and reinstall VS Code, Cursor, Antigravity, Discord and GitHub Desktop, because it patches their program files. On Windows, also delete `%APPDATA%\npm` and `%LOCALAPPDATA%\Programs\Python\Python3127`.
 6. Then remove everything the scan listed from the repositories, and check every config file and every `package.json` in each project, including subfolders. Commit authors and messages can be forged as well as dates. Run the scan again afterwards, and again later, in case the code comes back.
+
+### If it finds a GhostAction workflow
+
+These steps replace the ones above when the only findings are `ghostaction-workflow` or `ghostaction-runner-backdoor`. The workflow runs on GitHub's machines, so your own computer is not affected, unless the repository has a self-hosted runner.
+
+1. For `ghostaction-runner-backdoor` only: if the repository has a self-hosted runner, run `crontab -l` on that machine, remove the line ending in `#ghc2`, and take the machine off the network before you change any credentials. Then rebuild it, or replace everything stored on it: SSH keys, cloud credentials, `.env` files, and AI and GitHub tokens. Deleting the workflow does not clean that machine. If the repository has no self-hosted runner, that job never ran.
+2. From a computer you trust, cut off GitHub access first: change your GitHub password; revoke personal access tokens, OAuth app and GitHub App grants you cannot vouch for, and SSH and deploy keys; sign out of other sessions; and check your account's security log for the pushes and for new tokens or keys. Whoever pushed the workflow had a working login.
+3. Replace every secret stored in the repository and, for an organization, at the organization level, and every key that has ever appeared in the code, its history or its wiki. Deleting a key from history does not help once it has been sent. If the repository uses AWS through OpenID Connect, check CloudTrail for `AssumeRoleWithWebIdentity` sessions from it.
+4. Then delete the workflow, look at the Actions tab to see when it ran, and check for other workflows you did not add and for private gists named "build cache" on your account, which one version uses when it cannot reach its server.
+5. Turn on branch protection that blocks force pushes, and consider requiring review before workflow changes are merged.
 
 ## Report results
 
