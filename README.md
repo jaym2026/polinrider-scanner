@@ -10,6 +10,8 @@ Published by Jay Maier, Rising Sun Solutions LLC (phishing and malware threat in
 
 Download `polinrider_scan.py` from the [latest release](https://github.com/jaym2026/polinrider-scanner/releases/latest). The release notes give the file's SHA-256 hash; check that yours matches before you run it.
 
+If a warning from me gave you the hash `1814f4ee4255ee7accb4f650bd69130cfbd26c2a112cfcd86eada161116c984b`, that is version 0.1.1, and it will not match the latest release. Some warnings sent before November 19, 2026 quote it. Version 0.1.1 is still published, with that hash, on the [v0.1.1 release page](https://github.com/jaym2026/polinrider-scanner/releases/tag/v0.1.1). The current version, 0.2.0, adds the GhostAction workflow checks; its SHA-256 is `58ef090e44d2f27af4f491a50c8c718fa75a9388b079193efb240aba98b7249b`. Use either one, as long as the file matches the hash for that version.
+
 macOS and Linux:
 
 ```bash
