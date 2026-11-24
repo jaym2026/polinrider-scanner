@@ -122,6 +122,8 @@ Follow these steps in order, because new credentials entered on an infected comp
 5. Then clean the computer, or better, reinstall the operating system. To clean it: delete the hidden `.node_modules` folder in your home folder (not a project's `node_modules`); reinstall Node.js, including every nvm version, because the malware adds code to npm's own `lib/cli.js`; and reinstall VS Code, Cursor, Antigravity, Discord and GitHub Desktop, because it patches their program files. On Windows, also delete `%APPDATA%\npm` and `%LOCALAPPDATA%\Programs\Python\Python3127`.
 6. Then remove everything the scan listed from the repositories, and check every config file and every `package.json` in each project, including subfolders. Commit authors and messages can be forged as well as dates. Run the scan again afterwards, and again later, in case the code comes back.
 
+For step 6, [meSingh/polinrider-scanner](https://github.com/meSingh/polinrider-scanner), a separate open-source tool by another developer, can do the GitHub cleanup for you: its `restore` option moves each branch back to the newest clean state in GitHub's own record of pushes, where that record has one, so forged commit dates cannot fool it, and it shows what it would change and asks before changing anything. It signs in to GitHub, so use it only on a clean computer and only after step 3, and check its release as its README describes. I have read its documentation but have not tested it.
+
 ### If it finds a GhostAction workflow
 
 These steps replace the ones above when the only findings are `ghostaction-workflow` or `ghostaction-runner-backdoor`. The workflow runs on GitHub's machines, so your own computer is not affected, unless the repository has a self-hosted runner.
