@@ -78,6 +78,82 @@ class Base(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------------------------
+# 2026-11-24 shapes, built from what was read as text through the GitHub API (no sample here).
+# One account: tasks.json holds no `node` and no font path; the task runs sh / cmd on a script in
+# .vscode/ that runs `node .vscode/eslint`, an extensionless file of JavaScript. Another: the
+# payload is `public/fonts/fa-solid-300.llf`, run by `node ./public/fonts/fa-solid-300.llf`.
+ESLINT_STUB = "const _eslintShadowConfig = { rules: {}, env: { node: true } };\n" + "var a" + "0" * 4000 + "=1;\n"
+
+
+class TestEslintLauncher20261124(Base):
+    def tasks(self, sh=".vscode/eslint-check.sh", cmd=".vscode\\eslint-check.cmd"):
+        self.t.w(".vscode/tasks.json", json.dumps({"version": "2.0.0", "tasks": [
+            {"label": "eslint-check", "type": "shell", "command": "sh", "args": [sh],
+             "windows": {"command": "cmd.exe", "args": ["/d", "/c", cmd]},
+             "presentation": {"reveal": "never", "echo": False}},
+            {"label": "lint", "dependsOn": ["eslint-check"], "runOptions": {"runOn": "folderOpen"}}]}))
+
+    def test_task_with_no_node_follows_both_scripts_to_the_loader(self):
+        self.tasks()
+        self.t.w(".vscode/eslint-check.sh", "command -v node >/dev/null 2>&1 && node .vscode/eslint || echo ''\n")
+        self.t.w(".vscode/eslint-check.cmd", "where node >nul 2>&1 && node .vscode/eslint || echo ''\r\n")
+        self.t.w(".vscode/eslint", ESLINT_STUB)
+        s = self.t.scan()
+        f = by_rule(s, "folder-open-task")[0]
+        self.assertEqual(f["severity"], ps.HIGH)
+        self.assertEqual(f["targets"], [".vscode/eslint"])
+        h = by_rule(s, "vscode-hidden-script")
+        self.assertEqual([(x["path"], x["severity"]) for x in h], [(".vscode/eslint", ps.HIGH)])
+
+    def test_script_with_no_extension_is_still_followed(self):
+        self.tasks(sh=".vscode/eslint-check", cmd=".vscode\\eslint-check")
+        self.t.w(".vscode/eslint-check", "node public/fonts/fa-brands-400.ttf || true\n")
+        self.t.w("public/fonts/fa-brands-400.ttf", "(function(){var q=1;})();\n")
+        f = by_rule(self.t.scan(), "folder-open-task")[0]
+        self.assertEqual(f["targets"], ["public/fonts/fa-brands-400.ttf"])
+        self.assertEqual(f["severity"], ps.HIGH)
+
+    def test_powershell_file_is_followed(self):
+        self.t.w(".vscode/tasks.json", json.dumps({"tasks": [
+            {"label": "x", "command": "powershell", "args": ["-NoProfile", "-File", "tools/lint.ps1"],
+             "runOptions": {"runOn": "folderOpen"}}]}))
+        self.t.w("tools/lint.ps1", "node .\\assets\\fonts\\x\r\n")
+        self.t.w("assets/fonts/x", ESLINT_STUB)
+        f = by_rule(self.t.scan(), "folder-open-task")[0]
+        self.assertEqual(f["targets"], ["assets/fonts/x"])
+        self.assertEqual(f["severity"], ps.HIGH)
+
+    def test_extensionless_javascript_in_vscode_with_the_task_gone(self):
+        self.t.w(".vscode/eslint", ESLINT_STUB)
+        self.assertEqual(len(by_rule(self.t.scan(), "vscode-hidden-script")), 1)
+
+    def test_extensionless_non_code_in_vscode_is_silent(self):
+        self.t.w(".vscode/README", "Settings for this project.\n")
+        self.assertEqual(by_rule(self.t.scan(), "vscode-hidden-script"), [])
+
+    def test_inline_shell_command_is_not_a_script(self):
+        self.assertIsNone(ps.interp_script("sh -c 'node .vscode/eslint'"))
+        self.assertIsNone(ps.interp_script("cmd /c npm run dev"))
+        self.assertEqual(ps.interp_script("bash -e .vscode/x"), ".vscode/x")
+
+    def test_llf_payload(self):
+        self.t.w(".vscode/tasks.json", json.dumps({"tasks": [
+            {"label": "x", "command": "node", "args": ["./public/fonts/fa-solid-300.llf"],
+             "runOptions": {"runOn": "folderOpen"}}]}))
+        self.t.w("public/fonts/fa-solid-300.llf", "(function(){var q=1;})();\n")
+        s = self.t.scan()
+        f = by_rule(s, "folder-open-task")[0]
+        self.assertEqual((f["targets"], f["severity"]), (["public/fonts/fa-solid-300.llf"], ps.HIGH))
+        self.assertEqual(by_rule(s, "fake-font")[0]["severity"], ps.HIGH)
+
+    def test_unknown_extension_target_is_read_by_its_bytes(self):
+        self.t.w(".vscode/tasks.json", json.dumps({"tasks": [
+            {"label": "x", "command": "node ./public/fonts/fa-solid-300.qzx", "runOptions": {"runOn": "folderOpen"}}]}))
+        self.t.w("public/fonts/fa-solid-300.qzx", "(function(){var q=1;})();\n")
+        f = by_rule(self.t.scan(), "folder-open-task")[0]
+        self.assertEqual(f["severity"], ps.HIGH)
+
+
 class TestFolderOpenTask(Base):
     def task(self, command, rel=".vscode/tasks.json", extra=""):
         body = '''{

@@ -28,7 +28,7 @@ import stat
 import subprocess
 import sys
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 HIGH, REVIEW = "high", "review"
 SELF = os.path.realpath(os.path.abspath(__file__))
 try:
@@ -121,6 +121,12 @@ NODE_IN_SCRIPT = re.compile(r"""\bnode(?:js)?(?:\.exe)?\s+(?:--?[\w=.-]+\s+)*(?:
 SCRIPT_DIR = re.compile(r"""\$\(\s*dirname\s+["']?\$\{?0\}?["']?\s*\)/?|%~dp0|\$PSScriptRoot[\\/]?""")
 WRAPDIR = "\x00wrapdir\x00/"
 PATHLIKE = re.compile(r"[/\\]|\.[A-Za-z0-9]{1,6}$")
+# A script handed to a shell, cmd or PowerShell, whatever its name ends in: `sh .vscode/eslint-check`
+# runs as surely as `sh .vscode/eslint-check.sh`. `sh -c "..."` and `cmd /c node ...` carry the
+# command inline, and node_paths reads those directly.
+INTERP_SCRIPT = re.compile(r"""^(?:\S*/)?(?:sh|bash|zsh|dash)(?:\.exe)?\s+(?:-(?!c\b)[A-Za-z]+\s+)*['"]?([^\s'"]+)"""
+                           r"""|^cmd(?:\.exe)?\s+(?:/\w+\s+)*['"]?([^\s'"]+)"""
+                           r"""|^(?:powershell|pwsh)(?:\.exe)?\b.*?\s-(?:File|f)\s+['"]?([^\s'"]+)""", re.I)
 SCRIPT_TOKEN = re.compile(r"""([^\s'"&|;()<>]+\.(?:sh|cmd|bat|ps1))(?=$|[\s'"&|;()<>])""", re.I)
 REMOTE_PIPE = re.compile(r"""\b(?:curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|\n]{0,300}\|\s*(?:sudo\s+)?(?:sh|bash|zsh|node|python3?|iex|Invoke-Expression)\b""", re.I)
 
@@ -237,6 +243,24 @@ def norm_target(p):
     while p.startswith("./"):
         p = p[2:]
     return p
+
+
+def interp_script(cmd):
+    """The path a task command hands to sh, bash, cmd or PowerShell, else None."""
+    m = INTERP_SCRIPT.match(cmd.strip())
+    if not m:
+        return None
+    t = m.group(1) or m.group(2) or m.group(3)
+    if t.lower() in ("node", "node.exe", "npm", "npx", "echo", "call", "start") or not PATHLIKE.search(t):
+        return None
+    return t
+
+
+def in_vscode_or_fonts(rel):
+    """A path inside a `.vscode` folder or a fonts folder: where a file with no extension is
+    settings or a font, never a script."""
+    parts = rel.replace("\\", "/").lower().split("/")[:-1]
+    return ".vscode" in parts or any("font" in x for x in parts)
 
 
 def node_paths(text):
@@ -460,6 +484,8 @@ class RepoScan:
             self.check_gitignore(p)
         elif ext in ALL_FONTLIKE:
             self.check_font(p, ext)
+        elif ext == "" and parent == ".vscode":
+            self.check_vscode_script(p)
         elif ext in IMAGE_EXT:
             self.check_image(p, ext)
         elif CONFIG_FILE.search(rel):
@@ -493,6 +519,22 @@ class RepoScan:
             return
         self.add("fake-font", HIGH, p,
                  "%s file is not a font: %s" % (ext, describe(cls, facts)), content=cls, ghc2=self.is_ghc2(facts))
+
+    # -- rule 2b: a loader kept in .vscode under a name with no extension --------------------
+    def check_vscode_script(self, p):
+        """`.vscode/eslint`: JavaScript in a file with no extension inside .vscode, which holds
+        editor settings and never code. Reported even when no task names it any more."""
+        data = self.read(p)
+        if not data:
+            return
+        cls, facts = classify(data, "")
+        if not cls.startswith("text"):
+            return
+        if cls not in SUSPICIOUS and not JS_START.match(data[:4096]):
+            return
+        self.add("vscode-hidden-script", HIGH, p,
+                 "a file with no extension in .vscode holds JavaScript: %s" % describe(cls, facts),
+                 content=cls, ghc2=self.is_ghc2(facts))
 
     def check_image(self, p, ext):
         """JavaScript saved under an image name. Real images are binary, and a real SVG starts with
@@ -626,6 +668,9 @@ class RepoScan:
                 found = wrapped or [m.group(1) for m in PATHISH.finditer(c)] + node_paths(c)
                 targets += [(t, base) for t in found]
                 wrappers += [w for w in SCRIPT_TOKEN.findall(c)]
+                w = interp_script(c)
+                if w:
+                    wrappers.append(w)
             self.report_task(p, base, str(label), joined, targets, wrappers, hidden)
 
     def _collect(self, tk, bylabel, out, depth, seen):
@@ -704,7 +749,8 @@ class RepoScan:
             else:
                 data = self.read(tp) if self.isfile(tp) else None
                 cls, facts = classify(data or b"", text_ext) if data is not None else ("missing", {})
-            live = cls in SUSPICIOUS or (cls == "text_plain" and text_ext not in CODE_EXT | {".sh", ".py", ""})
+            live = cls in SUSPICIOUS or (cls == "text_plain" and text_ext not in CODE_EXT | {".sh", ".py", ""}) \
+                or (cls == "text_plain" and text_ext == "" and in_vscode_or_fonts(self.rel(tp)))
             if live or text_ext in ALL_FONTLIKE:
                 sev = HIGH
             notes.append("runs %s: %s" % (self.rel(tp), describe(cls, facts)))
